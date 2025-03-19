@@ -1,0 +1,19 @@
+# Byte-compiled / cached files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+env/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE and system files
+.vscode/
+.idea/
+.DS_Store
