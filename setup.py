@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="auto_dep_installer",
-    version="0.1",
+    version="0.2",
     author="Shubham Chambhare",
     author_email="shubhamchambhare654@gmail.com",
     description="Automatically install missing dependencies in your Python project",

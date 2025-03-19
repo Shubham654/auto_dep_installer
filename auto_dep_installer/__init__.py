@@ -5,4 +5,4 @@
 A tool to automatically scan your project for imported modules and install missing dependencies.
 """
 
-__version__ = '0.1'
+__version__ = '0.2'

@@ -1,239 +1,220 @@
-# auto_dep_installer/auto_dep_installer/cli.py
+# auto_dep_installer/auto_dep_installer/installer.py
 
-import argparse
-import os
-import sys
-import venv
+import importlib
 import subprocess
+import sys
+import pkg_resources
 import logging
-from pathlib import Path
 
-from .installer import install_missing_packages, resolve_dependencies
-from .scanner import scan_directory_for_imports
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 logger = logging.getLogger('auto_dep_installer')
 
-def create_venv(venv_path):
-    """Create a virtual environment at the specified path."""
-    logger.info(f"Creating virtual environment at {venv_path}...")
+def is_module_installed(module_name):
+    """Check if a module is installed and importable."""
     try:
-        venv.create(venv_path, with_pip=True)
-        logger.info(f"Virtual environment created successfully.")
+        importlib.import_module(module_name)
         return True
-    except Exception as e:
-        logger.error(f"Failed to create virtual environment: {e}")
+    except ImportError:
         return False
 
-def get_venv_python(venv_path):
-    """Get the path to the Python executable in the virtual environment."""
-    if sys.platform == "win32":
-        return os.path.join(venv_path, "Scripts", "python.exe")
-    else:
-        return os.path.join(venv_path, "bin", "python")
+def get_installed_packages():
+    """Get a dictionary of installed packages."""
+    return {pkg.key: pkg.version for pkg in pkg_resources.working_set}
 
-def activate_venv(venv_path):
-    """Modify environment to use the virtual environment."""
-    # Get the Python executable path in the virtual environment
-    python_path = get_venv_python(venv_path)
-    
-    if not os.path.exists(python_path):
-        logger.error(f"Python executable not found in virtual environment: {python_path}")
-        return False
-    
-    if sys.platform == "win32":
-        # On Windows, modify PATH to include the venv's Scripts directory
-        scripts_dir = os.path.join(venv_path, "Scripts")
-        os.environ["PATH"] = f"{scripts_dir};{os.environ['PATH']}"
-    else:
-        # On Unix, modify PATH to include the venv's bin directory
-        bin_dir = os.path.join(venv_path, "bin")
-        os.environ["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
-    
-    # Set VIRTUAL_ENV environment variable
-    os.environ["VIRTUAL_ENV"] = str(venv_path)
-    
-    # Remove PYTHONHOME if set
-    if "PYTHONHOME" in os.environ:
-        del os.environ["PYTHONHOME"]
-    
-    logger.info(f"Virtual environment activated: {venv_path}")
-    return True
-
-def verify_venv_activation(venv_path):
-    """Verify that the virtual environment is activated by checking sys.executable."""
-    python_path = get_venv_python(venv_path)
-    if os.path.normcase(sys.executable) != os.path.normcase(python_path):
-        # If not properly activated, try to run a subprocess using the venv Python
-        logger.warning(f"Virtual environment not fully activated. Using subprocess approach.")
-        return False
-    return True
-
-def install_in_venv(venv_path, packages, resolve=True):
-    """Install packages in the virtual environment using a subprocess."""
-    python_path = get_venv_python(venv_path)
-    
-    if not packages:
-        logger.info("No packages to install.")
+def install_package(package_name):
+    """Install a package using pip."""
+    logger.info(f"Installing {package_name}...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        logger.info(f"Successfully installed {package_name}")
         return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to install {package_name}: {e}")
+        return False
+
+def get_package_for_module(module_name, custom_mappings=None):
+    """Get the package name for a module, using mappings if available."""
+    if custom_mappings is None:
+        custom_mappings = {}
     
-    logger.info(f"Installing {len(packages)} packages in virtual environment...")
+    # Common module-to-package mappings
+    default_mappings = {
+        "bs4": "beautifulsoup4",
+        "PIL": "pillow",
+        "cv2": "opencv-python",
+        "sklearn": "scikit-learn",
+        "yaml": "pyyaml",
+        "wx": "wxpython",
+        "matplotlib.pyplot": "matplotlib",
+        "tensorflow.keras": "tensorflow",
+        "urllib3": "urllib3",
+        "lxml": "lxml",
+        "requests": "requests",
+        "numpy": "numpy",
+        "pandas": "pandas",
+        "flask": "flask",
+        "django": "django",
+        "sqlalchemy": "sqlalchemy",
+        "pytest": "pytest",
+        "selenium": "selenium",
+        "dash": "dash",
+        "kivy": "kivy",
+        "scrapy": "scrapy",
+        "folium": "folium",
+        "nltk": "nltk",
+        "gensim": "gensim",
+        "torch": "torch",
+        "transformers": "transformers",
+        "pyspark": "pyspark",
+        "streamlit": "streamlit",
+        "fastapi": "fastapi",
+        "plotly": "plotly",
+        "seaborn": "seaborn",
+        "bokeh": "bokeh",
+        "scipy": "scipy",
+        "sympy": "sympy",
+        "statsmodels": "statsmodels",
+    }
     
-    # Install packages one by one for better error handling
+    # Combine default and custom mappings
+    mappings = {**default_mappings, **custom_mappings}
+    
+    # Get root module name (e.g., 'numpy' from 'numpy.array')
+    root_module = module_name.split('.')[0]
+    
+    # Return the mapped package name or the root module name if no mapping exists
+    return mappings.get(root_module, root_module)
+
+def filter_standard_library_modules(modules):
+    """Filter out standard library modules."""
+    non_stdlib_modules = []
+    for module in modules:
+        root_module = module.split('.')[0]
+        try:
+            # If the module is in the standard library, it will be found in one of these locations
+            spec = importlib.util.find_spec(root_module)
+            if spec is None:
+                non_stdlib_modules.append(module)
+                continue
+            
+            # Check if the module is part of the standard library
+            if any(p.startswith(sys.prefix) for p in spec.submodule_search_locations or []):
+                # This is likely a third-party package installed in site-packages
+                non_stdlib_modules.append(module)
+            else:
+                # This is likely a standard library module
+                pass
+        except (ImportError, AttributeError):
+            # If there's an error, assume it's not a standard library module
+            non_stdlib_modules.append(module)
+    
+    return non_stdlib_modules
+
+def resolve_dependencies(failed_packages):
+    """Attempt to resolve dependencies for failed packages."""
+    resolved_packages = []
+    
+    for package in failed_packages:
+        # Try different approaches to resolve dependencies
+        
+        # 1. Check if the package has a different name on PyPI
+        alternative_names = {
+            # Add mappings for common packages with different names
+            "yaml": "pyyaml",
+            "cv": "opencv-python",
+            "skimage": "scikit-image",
+            "bs4": "beautifulsoup4",
+            "pil": "pillow",
+            "tk": "tk",
+            "tkinter": "tk",
+            "wx": "wxpython",
+        }
+        
+        if package.lower() in alternative_names:
+            logger.info(f"Trying alternative package name: {alternative_names[package.lower()]} for {package}")
+            resolved_packages.append(alternative_names[package.lower()])
+            continue
+        
+        # 2. Try with different casing
+        if package.lower() != package:
+            logger.info(f"Trying lowercase version: {package.lower()} for {package}")
+            resolved_packages.append(package.lower())
+            continue
+        
+        # 3. Try with hyphens instead of underscores
+        if "_" in package:
+            hyphen_version = package.replace("_", "-")
+            logger.info(f"Trying with hyphens: {hyphen_version} for {package}")
+            resolved_packages.append(hyphen_version)
+            continue
+        
+        # 4. Try common prefixes/suffixes
+        prefixes = ["python-"]
+        for prefix in prefixes:
+            logger.info(f"Trying with prefix: {prefix}{package} for {package}")
+            resolved_packages.append(f"{prefix}{package}")
+        
+        suffixes = ["-python"]
+        for suffix in suffixes:
+            logger.info(f"Trying with suffix: {package}{suffix} for {package}")
+            resolved_packages.append(f"{package}{suffix}")
+    
+    return resolved_packages
+
+def install_missing_packages(imported_modules, custom_mappings=None, dry_run=False, force_reinstall=False):
+    """Install missing packages based on imported modules."""
+    if custom_mappings is None:
+        custom_mappings = {}
+    
+    # Filter out standard library modules
+    non_stdlib_modules = filter_standard_library_modules(imported_modules)
+    logger.info(f"Found {len(non_stdlib_modules)} non-standard library modules out of {len(imported_modules)} imports")
+    
+    installed_packages = get_installed_packages()
+    to_install = []
+    
+    for module_name in non_stdlib_modules:
+        # Get root module name (e.g., 'numpy' from 'numpy.array')
+        root_module = module_name.split('.')[0]
+        
+        # Skip if the module is already installed and we're not forcing reinstall
+        if not force_reinstall and is_module_installed(root_module):
+            logger.debug(f"Module {root_module} is already installed")
+            continue
+        
+        # Get the package name for this module
+        package_name = get_package_for_module(module_name, custom_mappings)
+        
+        # Skip if the package is already installed under a different name
+        if not force_reinstall and package_name.lower() in installed_packages:
+            logger.debug(f"Package {package_name} is already installed")
+            continue
+            
+        to_install.append(package_name)
+    
+    # Remove duplicates while preserving order
+    to_install = list(dict.fromkeys(to_install))
+    
+    if not to_install:
+        logger.info("All dependencies are already installed.")
+        return []
+    
+    if dry_run:
+        logger.info(f"Would install {len(to_install)} packages: {', '.join(to_install)}")
+        return to_install
+    
+    logger.info(f"Found {len(to_install)} packages to install: {', '.join(to_install)}")
+    
+    # Install each package
     success_count = 0
     failed_packages = []
     
-    for package in packages:
-        try:
-            logger.info(f"Installing {package}...")
-            subprocess.check_call([python_path, "-m", "pip", "install", package])
+    for package in to_install:
+        if install_package(package):
             success_count += 1
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to install {package}: {e}")
+        else:
             failed_packages.append(package)
-    
-    # If we have failed packages and resolve is True, try to resolve dependencies
-    if failed_packages and resolve:
-        logger.info(f"Attempting to resolve dependencies for {len(failed_packages)} failed packages...")
-        resolved_packages = resolve_dependencies(failed_packages)
-        if resolved_packages:
-            # Try installing the resolved packages
-            return install_in_venv(venv_path, resolved_packages, resolve=False)
     
     if failed_packages:
         logger.warning(f"Failed to install {len(failed_packages)} packages: {', '.join(failed_packages)}")
     
-    logger.info(f"Successfully installed {success_count} out of {len(packages)} packages.")
-    return success_count == len(packages)
-
-def main():
-    parser = argparse.ArgumentParser(description="Auto Dependency Installer")
-    parser.add_argument(
-        "--directory", "-d", 
-        default=".", 
-        help="Directory to scan for Python files (default: current directory)"
-    )
-    parser.add_argument(
-        "--venv", "-v", 
-        default=".venv", 
-        help="Virtual environment name/path (default: .venv)"
-    )
-    parser.add_argument(
-        "--no-venv", 
-        action="store_true", 
-        help="Skip virtual environment creation/activation"
-    )
-    parser.add_argument(
-        "--custom-mappings", "-m",
-        help="Path to JSON file with custom module-to-package mappings"
-    )
-    parser.add_argument(
-        "--verbose", 
-        action="store_true", 
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--resolve", 
-        action="store_true", 
-        help="Attempt to resolve dependency issues"
-    )
-    parser.add_argument(
-        "--force-reinstall", 
-        action="store_true", 
-        help="Force reinstall of packages even if they are already installed"
-    )
-    
-    args = parser.parse_args()
-    
-    # Set logging level based on verbose flag
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-        logger.debug("Verbose mode enabled")
-    
-    # Convert relative paths to absolute
-    project_dir = os.path.abspath(args.directory)
-    venv_path = os.path.abspath(args.venv)
-    
-    logger.info(f"Starting Auto Dependency Installer")
-    logger.info(f"Project directory: {project_dir}")
-    
-    # Create and activate virtual environment if requested
-    if not args.no_venv:
-        if not os.path.exists(venv_path):
-            if not create_venv(venv_path):
-                logger.error("Failed to create virtual environment. Exiting.")
-                sys.exit(1)
-        
-        if not activate_venv(venv_path):
-            logger.error("Failed to activate virtual environment. Exiting.")
-            sys.exit(1)
-        
-        # Verify activation
-        if not verify_venv_activation(venv_path):
-            logger.warning("Virtual environment not fully activated. Will use subprocess approach.")
-    
-    # Load custom mappings if provided
-    custom_mappings = {}
-    if args.custom_mappings and os.path.exists(args.custom_mappings):
-        import json
-        try:
-            with open(args.custom_mappings, 'r') as f:
-                custom_mappings = json.load(f)
-            logger.info(f"Loaded {len(custom_mappings)} custom mappings from {args.custom_mappings}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse custom mappings file: {e}")
-    
-    # Scan for imports
-    logger.info(f"Scanning directory: {project_dir}")
-    imported_modules = scan_directory_for_imports(project_dir)
-    
-    if not imported_modules:
-        logger.warning("No imports found in the specified directory.")
-        sys.exit(0)
-    
-    logger.info(f"Found {len(imported_modules)} imported modules")
-    
-    # Determine packages to install
-    packages_to_install = install_missing_packages(
-        imported_modules, 
-        custom_mappings, 
-        dry_run=True, 
-        force_reinstall=args.force_reinstall
-    )
-    
-    if not packages_to_install:
-        logger.info("All dependencies are already installed.")
-        sys.exit(0)
-    
-    logger.info(f"Identified {len(packages_to_install)} packages to install")
-    
-    # Install packages
-    if args.no_venv:
-        # Install directly in the current environment
-        success = install_missing_packages(
-            imported_modules, 
-            custom_mappings, 
-            dry_run=False, 
-            force_reinstall=args.force_reinstall
-        )
-    else:
-        # Install in the virtual environment
-        success = install_in_venv(
-            venv_path, 
-            packages_to_install, 
-            resolve=args.resolve
-        )
-    
-    if success:
-        logger.info("Auto Dependency Installer completed successfully.")
-    else:
-        logger.warning("Auto Dependency Installer completed with some issues.")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+    return success_count == len(to_install)

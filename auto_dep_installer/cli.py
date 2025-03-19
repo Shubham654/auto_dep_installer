@@ -7,6 +7,7 @@ import venv
 import subprocess
 import logging
 from pathlib import Path
+import site
 
 from .installer import install_missing_packages, resolve_dependencies
 from .scanner import scan_directory_for_imports
@@ -37,6 +38,21 @@ def get_venv_python(venv_path):
     else:
         return os.path.join(venv_path, "bin", "python")
 
+def get_venv_site_packages(venv_path):
+    """Get the path to site-packages directory in the virtual environment."""
+    if sys.platform == "win32":
+        return os.path.join(venv_path, "Lib", "site-packages")
+    else:
+        # For non-Windows, we need to find the correct site-packages directory
+        # which might include the Python version number
+        lib_path = os.path.join(venv_path, "lib")
+        if os.path.exists(lib_path):
+            python_dirs = [d for d in os.listdir(lib_path) if d.startswith("python")]
+            if python_dirs:
+                return os.path.join(lib_path, python_dirs[0], "site-packages")
+        # Fallback
+        return os.path.join(venv_path, "lib", "python3", "site-packages")
+
 def activate_venv(venv_path):
     """Modify environment to use the virtual environment."""
     # Get the Python executable path in the virtual environment
@@ -61,6 +77,19 @@ def activate_venv(venv_path):
     # Remove PYTHONHOME if set
     if "PYTHONHOME" in os.environ:
         del os.environ["PYTHONHOME"]
+    
+    # Fully activate the environment by updating sys.path
+    site_packages = get_venv_site_packages(venv_path)
+    if os.path.exists(site_packages) and site_packages not in sys.path:
+        sys.path.insert(0, site_packages)
+    
+    # Update sys.prefix and sys.exec_prefix
+    sys.prefix = venv_path
+    sys.exec_prefix = venv_path
+    
+    # Try to update sys.executable
+    if os.path.exists(python_path):
+        sys.executable = python_path
     
     logger.info(f"Virtual environment activated: {venv_path}")
     return True
@@ -111,6 +140,46 @@ def install_in_venv(venv_path, packages, resolve=True):
     logger.info(f"Successfully installed {success_count} out of {len(packages)} packages.")
     return success_count == len(packages)
 
+def print_activation_instructions(venv_path):
+    """Print instructions for activating the virtual environment in a shell."""
+    logger.info("\n===== VIRTUAL ENVIRONMENT ACTIVATION =====")
+    logger.info("To activate this virtual environment in your terminal, run:")
+    
+    if sys.platform == "win32":
+        activate_cmd = os.path.join(venv_path, "Scripts", "activate.bat")
+        logger.info(f"\n   {activate_cmd}")
+    else:
+        activate_cmd = os.path.join(venv_path, "bin", "activate")
+        logger.info(f"\n   source {activate_cmd}")
+    
+    logger.info("\nTo use Python from this environment directly:")
+    python_path = get_venv_python(venv_path)
+    logger.info(f"   {python_path}")
+    logger.info("=======================================")
+
+def reload_site_packages():
+    """Reload site packages to ensure installed packages are available."""
+    importlib_spec = None
+    try:
+        import importlib
+        importlib_spec = importlib.util.find_spec("importlib.reload")
+    except (ImportError, AttributeError):
+        pass
+    
+    if importlib_spec:
+        try:
+            # If importlib.reload is available, use it
+            import importlib.reload
+            importlib.reload(site)
+        except Exception as e:
+            logger.warning(f"Failed to reload site packages: {e}")
+    else:
+        # Fallback to older approach
+        try:
+            reload(site)  # type: ignore
+        except Exception as e:
+            logger.warning(f"Failed to reload site packages: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description="Auto Dependency Installer")
     parser.add_argument(
@@ -147,6 +216,11 @@ def main():
         action="store_true", 
         help="Force reinstall of packages even if they are already installed"
     )
+    parser.add_argument(
+        "--no-instructions",
+        action="store_true",
+        help="Don't print activation instructions after installation"
+    )
     
     args = parser.parse_args()
     
@@ -163,6 +237,7 @@ def main():
     logger.info(f"Project directory: {project_dir}")
     
     # Create and activate virtual environment if requested
+    venv_created_or_activated = False
     if not args.no_venv:
         if not os.path.exists(venv_path):
             if not create_venv(venv_path):
@@ -172,6 +247,8 @@ def main():
         if not activate_venv(venv_path):
             logger.error("Failed to activate virtual environment. Exiting.")
             sys.exit(1)
+        
+        venv_created_or_activated = True
         
         # Verify activation
         if not verify_venv_activation(venv_path):
@@ -208,6 +285,8 @@ def main():
     
     if not packages_to_install:
         logger.info("All dependencies are already installed.")
+        if venv_created_or_activated and not args.no_instructions:
+            print_activation_instructions(venv_path)
         sys.exit(0)
     
     logger.info(f"Identified {len(packages_to_install)} packages to install")
@@ -228,6 +307,15 @@ def main():
             packages_to_install, 
             resolve=args.resolve
         )
+    
+    # Try to reload site packages to make newly installed packages available
+    try:
+        reload_site_packages()
+    except Exception as e:
+        logger.debug(f"Site packages reload failed: {e}")
+    
+    if venv_created_or_activated and not args.no_instructions:
+        print_activation_instructions(venv_path)
     
     if success:
         logger.info("Auto Dependency Installer completed successfully.")

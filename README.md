@@ -22,6 +22,8 @@ pip install auto-dep-installer
 - **Automatic Installation:** Installs missing packages via pip
 - **Command-Line Interface:** Simple and intuitive CLI
 - **Customizable Mappings:** Support for custom module-to-package mappings
+- **Dependency Resolution:** Attempts to resolve dependency conflicts when packages fail to install
+- **Cross-Platform Support:** Works on Windows, macOS, and Linux
 
 ## Quick Start
 
@@ -66,10 +68,30 @@ Use custom module-to-package mappings:
 auto-dep --custom-mappings mappings.json
 ```
 
+Enable verbose logging:
+
+```bash
+auto-dep --verbose
+```
+
+Attempt to resolve dependency issues:
+
+```bash
+auto-dep --resolve
+```
+
+Force reinstall packages even if they're already installed:
+
+```bash
+auto-dep --force-reinstall
+```
+
 ## Command-Line Options
 
 ```
-usage: auto-dep [-h] [--directory DIRECTORY] [--venv VENV] [--no-venv] [--custom-mappings CUSTOM_MAPPINGS]
+usage: auto-dep [-h] [--directory DIRECTORY] [--venv VENV] [--no-venv]
+               [--custom-mappings CUSTOM_MAPPINGS] [--verbose] [--resolve]
+               [--force-reinstall] [--no-instructions]
 
 Auto Dependency Installer
 
@@ -81,6 +103,10 @@ optional arguments:
   --no-venv             Skip virtual environment creation/activation
   --custom-mappings CUSTOM_MAPPINGS, -m CUSTOM_MAPPINGS
                         Path to JSON file with custom module-to-package mappings
+  --verbose             Enable verbose output
+  --resolve             Attempt to resolve dependency issues
+  --force-reinstall     Force reinstall of packages even if they are already installed
+  --no-instructions     Don't print activation instructions after installation
 ```
 
 ## Custom Mappings
